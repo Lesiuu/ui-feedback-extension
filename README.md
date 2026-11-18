@@ -1,0 +1,47 @@
+# UI Feedback helper
+
+A small Chrome extension for [UI Feedback](https://ui.lesiuu.com/docs), the board that shows a page on many devices at once. It makes a reviewed site's login through Google, GitHub or another OAuth provider work in the board's login window.
+
+## Why it is needed
+
+On the board every reviewed site runs on a host of its own, such as `shop-example-com-b4981fa5.view.ui.lesiuu.com`, and keeps its cookies there. **Log in to this site** opens the site's login in a window on that host. Most server-side OAuth logins then go wrong at the very end: the provider sends the browser back to the site's registered address, `https://shop.example.com/oauth/callback?code=...&state=...`, which is the real site, not the board. The site's state cookie is on the board's host, so the real site refuses the callback, and no web page can follow a navigation to another origin to fix that.
+
+The helper does it in the browser. While the board's login window is open, a top-level visit of that window to the site's real origin goes to the site's host on the board instead, with the same path, query and fragment. The provider's code is still unused (the site checks its state before it trades the code), so the board's proxy hands it to the site's server with the state cookie present, the site finishes the login as usual and sets its session on the board's host, where the devices read it.
+
+## Install
+
+1. Download this repository: **Code**, then **Download ZIP**, and unpack it. Or `git clone https://github.com/Lesiuu/ui-feedback-extension`.
+2. Open `chrome://extensions`, turn on **Developer mode**, choose **Load unpacked** and pick the folder.
+3. Reload the board. **Get the login helper** leaves the **…** menu, which is how you know the board sees the helper.
+
+## What it does, exactly
+
+- On the board's own pages (`https://ui.lesiuu.com/board/` and the owner's boards) a content script marks the page (`data-uifb-extension` on `<html>`), so the board knows the helper is there, and passes on one message from the board: "my login window is for site X on host Y".
+- The background checks that message again: it must come from a board page's top frame, the site must be a plain origin over https, and the host must be exactly the one the board gives that site (`<label>.view.ui.lesiuu.com`, the label worked out from the site's origin the same way the board does). Anything else is dropped.
+- The window is the tab the board's page opened a moment before (`webNavigation.onCreatedNavigationTarget` with the board's tab and top frame as its source). Windows a reviewed page opens from a device frame never count.
+- For that tab alone it adds one session rule: a `main_frame` request whose address starts with the site's exact origin is redirected to the same path and query on the site's host on the board. The provider's origin, other subdomains, other tabs and requests inside pages are never touched.
+- The rule goes when the window closes, when the board says the window is done, or after 30 minutes, whichever comes first.
+
+### Apps on localhost
+
+The board shows a dev server on `localhost` straight in its frames, and the app needs the board's overlay script to talk to the board (**Connect localhost** gives the tag). With the helper it needs no tag: in pages on `localhost`, `127.0.0.1` and `*.localhost`, a second content script checks whether the page is a frame placed right in a hosted board's page (`location.ancestorOrigins` is just `https://ui.lesiuu.com`, or the owner's board) and has no overlay tag yet, and only then adds `<script type="module" src="https://ui.lesiuu.com/board/overlay.js">`, the same tag Connect localhost gives. Opened on its own, or framed by anything else, the app is left as it is. The script runs in the page, so a page whose Content Security Policy blocks scripts from the board still blocks it: add the tag by hand or allow the board's origin in the policy.
+
+## Permissions and why
+
+- `declarativeNetRequest`: the one redirect rule, applied by Chrome itself. Session rules only, scoped to one tab.
+- `webNavigation`: to see which tab the board's page just opened, so the rule is tied to the login window and nothing else.
+- `alarms`: to drop the rule after 30 minutes, even if the browser put the helper to sleep meanwhile.
+- Content scripts on the boards' pages (the board's mark and its login window message) and on `localhost` pages (the overlay for apps framed by a board). They read nothing from the pages.
+- Host permission for every https site (and `localhost` for a board on this machine): Chrome redirects a request only for an extension that has permission for its address, and the site under review can be any site. This is why Chrome says the helper can "read and change all your data on all websites". The helper reads no page, changes no page but a board's and the localhost apps a board frames, and redirects nothing but the login window's visits of the one site the board named.
+
+## Privacy
+
+The helper collects no data and sends nothing anywhere. It has no server, no analytics and no storage: the board's message and the rule live in the browser's memory until the window closes. It writes nothing to the console, since the addresses it handles carry login codes.
+
+## Browsers
+
+Chrome and other Chromium browsers (Edge, Brave, Arc) from version 120. Firefox and Safari are not supported.
+
+## Source
+
+This repository is a copy of `extension/` in the UI Feedback repository, published with `npm run extension:publish`.

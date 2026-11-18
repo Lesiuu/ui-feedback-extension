@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+<!-- The board's icon, its note pin on a screen, on a light tile so it shows on dark toolbars too. -->
+<rect x="4" y="4" width="120" height="120" rx="26" fill="#fff"/>
+<rect x="18" y="26" width="92" height="76" rx="12" fill="none" stroke="#1b1f24" stroke-width="10"/>
+<path fill="#e5412d" d="M46 86V66a18 18 0 0 1 18-18a18 18 0 0 1 18 18a18 18 0 0 1-18 18Z"/>
+</svg>
