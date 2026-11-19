@@ -2,14 +2,14 @@
 // which view host belongs to that site on that board, and the one redirect rule for a login window. The background
 // imports it, and so do the tests (test/extension.test.mjs).
 
-/** The hosted boards and the host below which each runs its sites, one view host per site. */
+/** The hosted board and the host below which it runs its sites, one view host per site. */
 export const HOSTED = new Map([
   ["https://ui.lesiuu.com", "view.ui.lesiuu.com"],
 ])
 
 const LOCAL_BOARD = /^http:\/\/(localhost|127\.0\.0\.1):(\d+)$/
 const LOCAL_HOST = /^(localhost|127\.0\.0\.1|([a-z0-9-]+\.)+localhost)$/
-// The boards' own hosts are never a reviewed site: a rule for one would send the board or its frames elsewhere.
+// The board's own hosts are never a reviewed site: a rule for one would send the board or its frames elsewhere.
 const BOARD_HOST = /(^|\.)ui\.lesiuu\.com$/
 
 /** How long a login window's rule lives at most, as long as the Worker's login window cookie. */

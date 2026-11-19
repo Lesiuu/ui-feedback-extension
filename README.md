@@ -16,7 +16,7 @@ The helper does it in the browser. While the board's login window is open, a top
 
 ## What it does, exactly
 
-- On the board's own pages (`https://ui.lesiuu.com/board/` and the owner's boards) a content script marks the page (`data-uifb-extension` on `<html>`), so the board knows the helper is there, and passes on one message from the board: "my login window is for site X on host Y".
+- On the board's own pages (`https://ui.lesiuu.com/board/` and a board on this machine) a content script marks the page (`data-uifb-extension` on `<html>`), so the board knows the helper is there, and passes on one message from the board: "my login window is for site X on host Y".
 - The background checks that message again: it must come from a board page's top frame, the site must be a plain origin over https, and the host must be exactly the one the board gives that site (`<label>.view.ui.lesiuu.com`, the label worked out from the site's origin the same way the board does). Anything else is dropped.
 - The window is the tab the board's page opened a moment before (`webNavigation.onCreatedNavigationTarget` with the board's tab and top frame as its source). Windows a reviewed page opens from a device frame never count.
 - For that tab alone it adds one session rule: a `main_frame` request whose address starts with the site's exact origin is redirected to the same path and query on the site's host on the board. The provider's origin, other subdomains, other tabs and requests inside pages are never touched.
@@ -24,7 +24,7 @@ The helper does it in the browser. While the board's login window is open, a top
 
 ### Apps on localhost
 
-The board shows a dev server on `localhost` straight in its frames, and the app needs the board's overlay script to talk to the board (**Connect localhost** gives the tag). With the helper it needs no tag: in pages on `localhost`, `127.0.0.1` and `*.localhost`, a second content script checks whether the page is a frame placed right in a hosted board's page (`location.ancestorOrigins` is just `https://ui.lesiuu.com`, or the owner's board) and has no overlay tag yet, and only then adds `<script type="module" src="https://ui.lesiuu.com/board/overlay.js">`, the same tag Connect localhost gives. Opened on its own, or framed by anything else, the app is left as it is. The script runs in the page, so a page whose Content Security Policy blocks scripts from the board still blocks it: add the tag by hand or allow the board's origin in the policy.
+The board shows a dev server on `localhost` straight in its frames, and the app needs the board's overlay script to talk to the board (**Connect localhost** gives the tag). With the helper it needs no tag: in pages on `localhost`, `127.0.0.1` and `*.localhost`, a second content script checks whether the page is a frame placed right in the hosted board's page (`location.ancestorOrigins` is just `https://ui.lesiuu.com`) and has no overlay tag yet, and only then adds `<script type="module" src="https://ui.lesiuu.com/board/overlay.js">`, the same tag Connect localhost gives. Opened on its own, or framed by anything else, the app is left as it is. The script runs in the page, so a page whose Content Security Policy blocks scripts from the board still blocks it: add the tag by hand or allow the board's origin in the policy.
 
 ## Permissions and why
 
