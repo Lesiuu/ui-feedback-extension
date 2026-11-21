@@ -88,3 +88,92 @@ export function ruleFor(tab, site, view) {
     condition: { regexFilter: `^${escapeRegex(site)}(/.*)?$`, resourceTypes: ["main_frame"], tabIds: [tab] },
   }
 }
+
+/** How long after an automatic login a site gets no other, whatever came of it, so a login that fails cannot loop. */
+export const COOLDOWN = 10 * 60 * 1000
+/** How long a login runs out of sight. A provider that has not sent the window back by then needs the person. */
+export const UNSEEN = 4000
+
+/** Whether a site runs on this machine, where the board frames it straight and its Lax cookies stay out of the frame. */
+export function isLocal(site) {
+  try {
+    return LOCAL_HOST.test(new URL(site).hostname)
+  } catch {
+    return false
+  }
+}
+
+/** Whether a host is one of the board's own, which a frame can share a cookie partition with. */
+export const isBoardHost = (host) => BOARD_HOST.test(host)
+
+/**
+ * An OAuth or OIDC authorize address over https: { back } with the origin its redirect_uri returns to, null when it
+ * names none and the provider uses the one registered. Anything else is null.
+ */
+export function authorizeOf(text) {
+  let url
+  try {
+    url = new URL(text)
+  } catch {
+    return null
+  }
+  const q = url.searchParams
+  if (url.protocol !== "https:" || !q.get("client_id") || !(q.has("redirect_uri") || q.has("response_type"))) return null
+  if (!q.has("redirect_uri")) return { back: null }
+  try {
+    return { back: new URL(q.get("redirect_uri")).origin }
+  } catch {
+    return null
+  }
+}
+
+// The last part of a path that is still the way in, not a page behind it.
+const WAY_IN = /(^|\/)(log-?in|sign-?in|auth|oauth|sso|callback|error)\/?$/i
+
+/**
+ * What a page the login window came back to says: "in" past the login, "waiting" while the address still carries
+ * the provider's answer for the page's script to take, "failed" on an error or a login page again.
+ */
+export function landing(text) {
+  const url = new URL(text)
+  const q = url.searchParams
+  if (q.has("error")) return "failed"
+  if (q.has("code") || /(^#|&)(code|access_token|id_token)=/.test(url.hash)) return "waiting"
+  return WAY_IN.test(url.pathname) ? "failed" : "in"
+}
+
+/**
+ * One Set-Cookie line of a response to `pageUrl`: { name, value, path, httpOnly, expires, gone, partitioned }, or
+ * null when it names no cookie. `expires` is in seconds, absent for a session cookie.
+ */
+export function parseSetCookie(line, pageUrl, now = Date.now()) {
+  const [pair, ...rest] = String(line).split("\x3b")
+  const eq = pair.indexOf("=")
+  if (eq < 1) return null
+  const attrs = new Map(
+    rest.map((part) => {
+      const at = part.indexOf("=")
+      return at < 0 ? [part.trim().toLowerCase(), ""] : [part.slice(0, at).trim().toLowerCase(), part.slice(at + 1).trim()]
+    }),
+  )
+  const given = attrs.get("path")
+  const path = given?.startsWith("/") ? given : new URL(pageUrl).pathname.replace(/\/[^/]*$/, "") || "/"
+  const age = attrs.has("max-age") ? Number(attrs.get("max-age")) : NaN
+  const date = attrs.has("expires") ? Date.parse(attrs.get("expires")) : NaN
+  const at = Number.isFinite(age) ? now + age * 1000 : date
+  return {
+    name: pair.slice(0, eq).trim(),
+    value: pair.slice(eq + 1).trim(),
+    path,
+    httpOnly: attrs.has("httponly"),
+    partitioned: attrs.has("partitioned"),
+    gone: Number.isFinite(at) && at <= now,
+    ...(Number.isFinite(at) ? { expires: Math.floor(at / 1000) } : {}),
+  }
+}
+
+/** What chrome.cookies.set takes for a cookie of a local site in the partition of the board's frames. */
+export function framedCookie(site, cookie, partitionKey) {
+  const { name, value, path, httpOnly, expires } = cookie
+  return { url: `${site}${path}`, name, value, path, httpOnly, secure: true, sameSite: "no_restriction", partitionKey, ...(expires ? { expirationDate: expires } : {}) }
+}
