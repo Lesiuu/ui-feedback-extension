@@ -25,13 +25,15 @@ document.addEventListener("uifb:login-window", (e) => {
 })
 document.addEventListener("uifb:login-window-closed", () => relay({ type: "login-window-closed" }))
 document.addEventListener("uifb:login-forward", () => relay({ type: "login-forward" }))
+document.addEventListener("uifb:login-use", () => relay({ type: "login-use" }))
+document.addEventListener("uifb:login-reloaded", () => relay({ type: "login-reloaded" }))
 document.addEventListener("uifb:login-start", (e) => {
   const detail = detailOf(e)
   if (typeof detail?.site === "string" && typeof detail?.url === "string") relay({ type: "login-start", site: detail.site, url: detail.url, manual: detail.manual === true })
 })
 
 // The background asks which site the board has open, as it may have slept since the board last said.
-const TO_BOARD = new Set(["login-seen", "login-finished", "login-session"])
+const TO_BOARD = new Set(["login-seen", "login-finished", "login-session", "login-offer", "login-lost"])
 chrome.runtime.onMessage.addListener((message, sender, reply) => {
   if (sender.id !== chrome.runtime.id) return
   if (message?.type === "open-site") reply(document.documentElement.dataset.uifbSite ?? null)

@@ -126,7 +126,9 @@ export function authorizeOf(text) {
 }
 
 // The last part of a path that is still the way in, not a page behind it.
-const WAY_IN = /(^|\/)(log-?in|sign-?in|auth|oauth|sso|callback|error)\/?$/i
+const WAY_IN = /(^|\/)(log-?in|sign-?in|auth|oauth|sso|saml2?|acs|callback|error|2fa|mfa|otp|verify|challenge)\/?$/i
+// A step of the site's own after the provider, where the person still has something to type.
+const STEP = /(^|\/)(2fa|mfa|otp|verify|challenge)\/?$/i
 
 /**
  * What a page the login window came back to says: "in" past the login, "waiting" while the address still carries
@@ -136,9 +138,83 @@ export function landing(text) {
   const url = new URL(text)
   const q = url.searchParams
   if (q.has("error")) return "failed"
-  if (q.has("code") || /(^#|&)(code|access_token|id_token)=/.test(url.hash)) return "waiting"
+  // Access answers its own return with a redirect to the page, so this address is never where a login ends.
+  if (q.has("code") || /(^#|&)(code|access_token|id_token)=/.test(url.hash) || url.pathname === "/cdn-cgi/access/authorized") return "waiting"
   return WAY_IN.test(url.pathname) ? "failed" : "in"
 }
+
+/** Whether the address says the provider or the site refused the login, not just that it is not over yet. */
+export const refused = (text) => new URL(text).searchParams.has("error")
+
+/** Whether a page is a 2FA or similar step of the site's own, which the window stays open for. */
+export const isStep = (text) => STEP.test(new URL(text).pathname)
+
+const ACCESS_HOST = /^[a-z0-9-]+\.cloudflareaccess\.com$/
+const ACCESS_PATH = /^\/cdn-cgi\/access\/login\/([^/]+)\/?$/
+// Suffixes under which two names are different owners, the common ones: a sibling there is nobody's subdomain.
+const SHARED_SUFFIX = /^(co|com|net|org|gov|edu|ac)\.[a-z]{2}$/
+const ownable = (host) => host.includes(".") && !SHARED_SUFFIX.test(host) && !/^[\d.]+$/.test(host)
+const parentOf = (host) => host.split(".").slice(1).join(".")
+
+/** Whether `other` is `host`, a parent of it, or a sibling sharing all but the first label. */
+export function sameFamily(host, other) {
+  if (host === other) return true
+  if (/^[\d.]+$/.test(host)) return false
+  if (host.endsWith(`.${other}`)) return ownable(other)
+  return parentOf(host) === parentOf(other) && ownable(parentOf(host))
+}
+
+/** Whether an address can be a provider's login at all, before anything is asked of the board. */
+export function loginLike(text) {
+  if (authorizeOf(text)) return true
+  try {
+    const url = new URL(text)
+    return url.protocol === "https:" && (url.searchParams.has("SAMLRequest") || (ACCESS_HOST.test(url.hostname) && ACCESS_PATH.test(url.pathname)))
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Whether a device sent to `text` meets a login of the open site: null when not, else { viewable }, true when the
+ * provider's return could also be taken on the view host by a redirect rule, the fallback for a session that does not
+ * survive the copy. Access, SAML, form_post and a return to another host can only come back to the real site.
+ */
+export function loginOf(text, { site, views = [], local = false, from = null }) {
+  if (!loginLike(text)) return null
+  const url = new URL(text)
+  const host = new URL(site).hostname
+  if (ACCESS_HOST.test(url.hostname)) return ACCESS_PATH.exec(url.pathname)?.[1].toLowerCase() === host ? { viewable: false } : null
+  if (url.searchParams.has("SAMLRequest")) return (local ? from === site : views.includes(from)) ? { viewable: false } : null
+  const { back } = authorizeOf(text)
+  const formPost = url.searchParams.get("response_mode") === "form_post"
+  if ((back ?? from) === site || (!back && views.includes(from))) return { viewable: !formPost }
+  if (back && views.includes(back)) return { viewable: false }
+  return back?.startsWith("https://") && !local && sameFamily(host, new URL(back).hostname) ? { viewable: false } : null
+}
+
+// What sites and their scripts set on any visit, logged in or not, so it says nothing about a login.
+const NOISE = /^(_ga|_gid|_gat|_gcl|_fbp|_fbc|_hj|__utm|_uet|_clck|_clsk|__cf_bm|_cfuvid|cf_clearance|__hs|hubspot|ajs_|amplitude|mp_|intercom|_pk_|_tt_|optanonconsent|cookieconsent)/i
+
+/** One cookie's place in a jar, which is what makes it the same cookie. */
+export const cookieKey = (c) => `${c.name}\n${c.domain}\n${c.path}`
+
+/**
+ * Whether the site's cookies now hold something the login wrote: new or changed against `before` (key to value), not
+ * a tracker's, and not what the site set on the way out (`flow`, name to value), such as its OAuth state.
+ */
+export function sessionChanged(before, now, flow = new Map()) {
+  return now.some((c) => !c.partitionKey && !NOISE.test(c.name) && before.get(cookieKey(c)) !== c.value && flow.get(c.name) !== c.value)
+}
+
+/** Whether a cookie with these attributes is one a request to `host` carries. */
+export function reaches(c, host) {
+  const domain = c.domain.replace(/^\./, "")
+  return c.hostOnly ? domain === host : host === domain || host.endsWith(`.${domain}`)
+}
+
+/** Names the helper never writes onto a view host: the Worker's own cookies there. */
+export const isBoardCookie = (name) => /^__host-uifb/i.test(name)
 
 /**
  * One Set-Cookie line of a response to `pageUrl`: { name, value, path, httpOnly, expires, gone, partitioned }, or
