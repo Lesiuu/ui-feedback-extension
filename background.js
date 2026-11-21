@@ -4,7 +4,7 @@
 // only for that one site, and only until the window closes, the board says it is done or LIFETIME passes. The helper
 // also starts that window by itself when a device meets a login (below). Nothing is logged, kept or sent anywhere:
 // the addresses carry login codes.
-import { COOLDOWN, HOSTED, LIFETIME, UNSEEN, authorizeOf, boardOf, checkLogin, framedCookie, isBoardHost, isLocal, labelOf, landing, parseSetCookie, ruleFor, siteOf, viewsOf } from "./rules.js"
+import { COOLDOWN, HOSTED, LIFETIME, authorizeOf, boardOf, checkLogin, framedCookie, isBoardHost, isLocal, labelOf, landing, parseSetCookie, ruleFor, siteOf, viewsOf } from "./rules.js"
 
 // The board opens its window in the click and names the site once it has the view ticket, a moment later, so a tab
 // it opened waits this long for that word, and a word this long for its tab.
@@ -97,7 +97,7 @@ chrome.runtime.onMessage.addListener((message, sender) => {
 chrome.tabs.onRemoved.addListener((tab) => {
   opened.delete(tab)
   asked.delete(tab)
-  // A window whose board is gone has nobody to come back to, and one out of sight would stay there.
+  // A window whose board is gone has nobody to come back to.
   const a = tries.get(tab) ?? running.get(tab)
   if (a?.tab !== undefined) void finish(a, a.tab === tab ? "closed" : "failed")
   void end(tab)
@@ -113,9 +113,9 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 
 /*
  * The login without a click. A device of a board goes to a provider's authorize address that returns to the open
- * site: the board gets a ticket and the helper runs the site's login in a window of its own, minimized, where the
- * provider may frame nothing and its own session counts. A provider that answers by itself is never seen. One that
- * needs the person comes forward after UNSEEN. Back on the site the window closes and the devices load again.
+ * site: the board gets a ticket and the helper opens the site's login at once in a window of its own, over the board,
+ * where the provider may frame nothing and its own session counts. Back on the site the window closes and the devices
+ * load again.
  */
 
 // What runs now, by the window's tab and by the board's tab. Lost if Chrome ends the worker, which the keepalive
@@ -146,6 +146,13 @@ async function openSite(tab) {
   if (!site || site === board) return null
   const local = isLocal(site)
   return { board, site, local, views: local ? [] : await viewsOf(board, site) }
+}
+
+/** Over the board, where the person is looking, as the board places the login window it opens itself. */
+async function overBoard(board) {
+  const { windowId } = await chrome.tabs.get(board)
+  const w = await chrome.windows.get(windowId)
+  return { left: Math.round(w.left + Math.max(0, (w.width - SIZE.width) / 2)), top: Math.round(w.top + Math.max(0, (w.height - SIZE.height) / 3)) }
 }
 
 const forward = (a) => void chrome.windows.update(a.window, { state: "normal", focused: true, ...SIZE }).catch(() => {})
@@ -215,7 +222,9 @@ async function starting(board, message) {
       await chrome.alarms.create(cool, { when: Date.now() + COOLDOWN })
     }
     Object.assign(a, { site: open.site, local: open.local, homes: [open.site, ...open.views], from: new URL(entry.url).pathname })
-    const win = await chrome.windows.create({ url: "about:blank", type: "popup", ...(a.manual ? { focused: true, ...SIZE } : { state: "minimized" }) })
+    const shape = { url: "about:blank", type: "popup", focused: true, ...SIZE }
+    // Chrome refuses a place mostly off the screen, as under a board window dragged half out of it.
+    const win = await chrome.windows.create({ ...shape, ...(await overBoard(board)) }).catch(() => chrome.windows.create(shape))
     a.window = win.id
     a.tab = win.tabs[0].id
     tries.set(a.tab, a)
@@ -224,7 +233,6 @@ async function starting(board, message) {
     // Before the window goes anywhere, so the provider's return is caught however fast it comes.
     if (entry.view) await chrome.declarativeNetRequest.updateSessionRules({ removeRuleIds: [a.tab], addRules: [ruleFor(a.tab, open.site, entry.view)] })
     await chrome.alarms.create(alarmOf(a.tab, board), { when: Date.now() + LIFETIME })
-    if (!a.manual) a.unseen = setTimeout(() => forward(a), UNSEEN)
     await chrome.tabs.update(a.tab, { url: entry.url })
   } catch {
     if (a.tab === undefined) running.delete(board)
@@ -311,7 +319,6 @@ async function finish(a, outcome) {
   if (a.over) return
   a.over = true
   clearTimeout(a.settle)
-  clearTimeout(a.unseen)
   clearInterval(a.keep)
   running.delete(a.board)
   tries.delete(a.tab)

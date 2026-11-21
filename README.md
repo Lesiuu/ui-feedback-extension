@@ -1,6 +1,6 @@
 # UI Feedback helper
 
-A small Chrome extension for [UI Feedback](https://ui.lesiuu.com/docs), the board that shows a page on many devices at once. It logs the board's devices in by itself: a reviewed site's login through Google, GitHub or another OAuth provider runs in a window of its own, out of sight when the provider needs nobody, and an app on `localhost` logs in like any other site.
+A small Chrome extension for [UI Feedback](https://ui.lesiuu.com/docs), the board that shows a page on many devices at once. It logs the board's devices in by itself: a reviewed site's login through Google, GitHub or another OAuth provider opens at once in a window of its own, and an app on `localhost` logs in like any other site.
 
 ## Why it is needed
 
@@ -25,8 +25,8 @@ The helper does it in the browser. While the board's login window is open, a top
 ### The login without a click
 
 - When a device of a board (a frame right under the board's page, never a frame inside a reviewed page) goes to an https address with `client_id` and `redirect_uri` or `response_type`, and that address returns to the site the board has open, the helper tells the board. Only that the login was met and on which page of the site: the address itself stays in the helper.
-- The board asks its server for a ticket and the helper opens the site in a minimized window, with the redirect above for that window's tab. The site starts its own login there with a fresh state.
-- A provider that answers by itself is never seen. One that needs a password, a consent or an account choice comes forward after 4 seconds.
+- The board asks its server for a ticket and the helper opens the site in a window over the board right away, with the redirect above for that window's tab. The site starts its own login there with a fresh state.
+- A provider that needs a password, a consent or an account choice asks for it in that window.
 - Back on the site, with the page loaded, the window closes and the devices load again. A login that ended on an error or a login page closes too and says so.
 - One window per board tab at a time, and after an attempt no other for that site in that tab for 10 minutes, whatever came of it, so a login that fails cannot loop. **Log in to this site** in the **…** menu always works.
 

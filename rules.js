@@ -91,8 +91,6 @@ export function ruleFor(tab, site, view) {
 
 /** How long after an automatic login a site gets no other, whatever came of it, so a login that fails cannot loop. */
 export const COOLDOWN = 10 * 60 * 1000
-/** How long a login runs out of sight. A provider that has not sent the window back by then needs the person. */
-export const UNSEEN = 4000
 
 /** Whether a site runs on this machine, where the board frames it straight and its Lax cookies stay out of the frame. */
 export function isLocal(site) {
