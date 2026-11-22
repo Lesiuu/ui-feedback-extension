@@ -95,6 +95,8 @@ chrome.runtime.onMessage.addListener((message, sender) => {
   // The person's click on the board's offer, for a session this browser already had.
   if (message?.type === "login-use" && running.get(board)?.offered) void finish(running.get(board), "done")
   if (message?.type === "login-reloaded") reloading.delete(board)
+  if (message?.type === "login-cancel" && running.get(board)?.window !== undefined) void finish(running.get(board), "cancelled")
+  if (message?.type === "login-ask") void tell(board, { type: "login-state", open: running.has(board) || closing.has(board) }).catch(() => {})
 })
 
 chrome.tabs.onRemoved.addListener((tab) => {
@@ -132,6 +134,8 @@ const spotting = new Set()
 // Boards that have a copy but have not loaded their devices again: a redirect still on its way from before the copy
 // says nothing about whether the copied session holds.
 const reloading = new Set()
+// Boards whose login is over but still copying: their waiting screen stays until the result is known.
+const closing = new Set()
 // Any extension call keeps the worker alive, and a person typing a password takes longer than its idle limit.
 const KEEPALIVE = 20 * 1000
 // How long a page that came back may still change the address before its verdict is read.
@@ -259,6 +263,8 @@ async function starting(board, message) {
     // Before the window goes anywhere, so the provider's return is caught however fast it comes.
     if (entry.view) await chrome.declarativeNetRequest.updateSessionRules({ removeRuleIds: [a.tab], addRules: [ruleFor(a.tab, open.site, entry.view)] })
     await chrome.alarms.create(alarmOf(a.tab, board), { when: Date.now() + LIFETIME })
+    // Before the window goes anywhere, as a provider that answers at once could end the login before this arrives.
+    await tell(board, { type: "login-opened" }).catch(() => {})
     await chrome.tabs.update(a.tab, { url: entry.url })
   } catch {
     if (a.tab === undefined) running.delete(board)
@@ -437,9 +443,12 @@ async function finish(a, outcome) {
   clearInterval(a.keep)
   a.unwatch?.()
   running.delete(a.board)
+  closing.add(a.board)
   tries.delete(a.tab)
   if (!tries.size) follow(false)
-  if (a.local) await copySession(a).catch(() => {})
+  if (a.local && outcome !== "cancelled") await copySession(a).catch(() => {})
+  // Cancelled by hand, so the devices meeting the login again on their reload must not open the window right back.
+  if (outcome === "cancelled") await chrome.alarms.create(await coolOf(a.board, a.site), { when: Date.now() + COOLDOWN })
   // Only a login seen through the provider, or a person's click. Closing a window nobody asked for copies nothing.
   if (a.real && (outcome === "done" || (outcome === "closed" && a.manual))) {
     const copied = await copyToView(a).catch(() => 0)
@@ -454,6 +463,7 @@ async function finish(a, outcome) {
   }
   await end(a.tab).catch(() => {})
   if (outcome !== "closed") await chrome.windows.remove(a.window).catch(() => {})
+  closing.delete(a.board)
   await tell(a.board, { type: "login-finished", outcome }).catch(() => {})
 }
 
