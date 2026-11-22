@@ -190,10 +190,12 @@ async function spotted(d, from) {
     const path = source && d.method === "GET" && homes.includes(source.origin) ? source.pathname + source.search : null
     // Met again after a copy: the session did not hold in the frames.
     if (await chrome.alarms.get(await againOf(d.tabId, open.site))) {
-      if (!reloading.has(d.tabId)) await tell(d.tabId, found.viewable ? { type: "login-seen", path, retry: true } : { type: "login-lost" })
+      if (!reloading.has(d.tabId)) await tell(d.tabId, found.viewable ? { type: "login-seen", path, retry: true } : { type: "login-lost", path })
       return
     }
-    if (await chrome.alarms.get(await coolOf(d.tabId, open.site))) return
+    // No window by itself so soon after the last, or a failing login would loop. The board asks for a click instead,
+    // as the device is left on a provider's page that refuses the frame.
+    if (await chrome.alarms.get(await coolOf(d.tabId, open.site))) return void (await tell(d.tabId, { type: "login-needed", path }))
     await tell(d.tabId, { type: "login-seen", path })
   } catch {
   } finally {
@@ -245,7 +247,10 @@ async function starting(board, message) {
       const cool = await coolOf(board, open.site)
       const cooled = await chrome.alarms.get(cool)
       const retry = Boolean(entry.view) && (await chrome.alarms.clear(await againOf(board, open.site)))
-      if (cooled && !retry) return void running.delete(board)
+      if (cooled && !retry) {
+        running.delete(board)
+        return void (await tell(board, { type: "login-needed", path: a.from ?? null }).catch(() => {}))
+      }
       await chrome.alarms.create(cool, { when: Date.now() + COOLDOWN })
     }
     const real = !open.local && !entry.view

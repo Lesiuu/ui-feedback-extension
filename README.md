@@ -26,7 +26,7 @@ The helper runs the login where it belongs. It opens the site's **real address**
 - The window closes by itself when all of this holds: it went through a provider over https, it is back on the site, the site has a new or changed cookie compared with before the window opened (trackers and what the site set on its way out, such as its OAuth state, do not count), and the address has stayed put for a moment. A 2FA, verification or other login step of the site keeps the window open. Back on the site with no new cookie, the window stays open for you, and closing it changes nothing.
 - While the window is open the board covers its devices with a waiting screen. **Show login window** brings a lost window back, **Cancel** closes it and copies nothing, and a finished login shows a short confirmation while the devices load.
 - A login that ended on an error closes the window and says so.
-- One window per board tab at a time, and after an attempt no other for that site in that tab for 10 minutes, whatever came of it, so a login that fails cannot loop. **Log in to this site** always works.
+- One window per board tab at a time, and after an attempt no other for that site in that tab for 10 minutes, whatever came of it, so a login that fails cannot loop. A device that meets the login again in that time gets a **Log in** button on the board instead of a refused page. That click and **Log in to this site** always work.
 
 ### What is copied, where and why
 

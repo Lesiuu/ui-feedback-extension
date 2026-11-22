@@ -35,7 +35,7 @@ document.addEventListener("uifb:login-start", (e) => {
 })
 
 // The background asks which site the board has open, as it may have slept since the board last said.
-const TO_BOARD = new Set(["login-seen", "login-finished", "login-session", "login-offer", "login-lost", "login-opened", "login-state", "login-none"])
+const TO_BOARD = new Set(["login-seen", "login-finished", "login-session", "login-offer", "login-lost", "login-opened", "login-state", "login-none", "login-needed"])
 chrome.runtime.onMessage.addListener((message, sender, reply) => {
   if (sender.id !== chrome.runtime.id) return
   if (message?.type === "open-site") reply(document.documentElement.dataset.uifbSite ?? null)
