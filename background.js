@@ -4,7 +4,7 @@
 // the board's proxy and the site's server finishes the login there, where its state cookie is. Only that window's tab
 // gets a rule, only for that one site, and only until the window closes, the board says it is done or LIFETIME passes.
 // Nothing is logged, kept or sent anywhere: the addresses carry login codes.
-import { COOLDOWN, HOSTED, LIFETIME, boardOf, checkLogin, cookieKey, framedCookie, isBoardCookie, isBoardHost, isLocal, isStep, labelOf, landing, loginLike, loginOf, parseSetCookie, reaches, refused, ruleFor, sessionChanged, siteOf, viewsOf } from "./rules.js"
+import { COOLDOWN, HOSTED, LIFETIME, boardOf, checkLogin, cookieKey, framedCookie, holdsSession, isBoardCookie, isBoardHost, isLocal, isStep, labelOf, landing, loginLike, loginOf, parseSetCookie, reaches, refused, ruleFor, sessionChanged, siteOf, viewsOf } from "./rules.js"
 
 // The board opens its window in the click and names the site once it has the view ticket, a moment later, so a tab
 // it opened waits this long for that word, and a word this long for its tab.
@@ -92,8 +92,8 @@ chrome.runtime.onMessage.addListener((message, sender) => {
   if (message?.type === "login-window-closed") void done(board)
   if (message?.type === "login-start") void starting(board, message)
   if (message?.type === "login-forward" && running.get(board)?.window !== undefined) forward(running.get(board))
-  // The person's click on the board's offer, for a session this browser already had.
-  if (message?.type === "login-use" && running.get(board)?.offered) void finish(running.get(board), "done")
+  // The person's click on the board, for a session this browser already had.
+  if (message?.type === "login-use" && running.get(board)?.window !== undefined) void useSession(running.get(board))
   if (message?.type === "login-reloaded") reloading.delete(board)
   if (message?.type === "login-cancel" && running.get(board)?.window !== undefined) void finish(running.get(board), "cancelled")
   if (message?.type === "login-ask") void tell(board, { type: "login-state", open: running.has(board) || closing.has(board) }).catch(() => {})
@@ -326,10 +326,20 @@ function judgeReal(a, url, since) {
       if (!a.over && a.last === url) void finish(a, "done")
       return
     }
-    if (a.manual || a.offered || a.over) return
+    if (a.offered || a.over) return
+    // A guest's page has nothing to offer, and the person is about to log in there.
+    if (!holdsSession(a.before, await siteCookies(a.site, url), a.flow) || a.over || a.last !== url) return
     a.offered = true
     await tell(a.board, { type: "login-offer" }).catch(() => {})
   }, SETTLE)
+}
+
+/** The person says the window is signed in, which its address cannot always show. With nothing to copy it stays open. */
+async function useSession(a) {
+  const holds = !a.real || holdsSession(a.before, await siteCookies(a.site).catch(() => []), a.flow)
+  if (a.over) return
+  if (holds) return void finish(a, "done")
+  await tell(a.board, { type: "login-none" }).catch(() => {})
 }
 
 function judge(a, url, since = Date.now()) {
@@ -428,7 +438,8 @@ async function copyToView(a) {
   const key = await viewPartition(a)
   if (!key) return 0
   let copied = 0
-  for (const c of await siteCookies(a.site, a.last ?? a.site)) {
+  // The click can come while the window is still blank or on the provider.
+  for (const c of await siteCookies(a.site, a.last && atHome(a, a.last) ? a.last : a.site)) {
     if (isBoardCookie(c.name)) continue
     const set = await chrome.cookies.set(framedCookie(a.view, { name: c.name, value: c.value, path: c.path, httpOnly: c.httpOnly, expires: c.expirationDate }, key)).catch(() => null)
     if (set) copied++

@@ -207,6 +207,14 @@ export function sessionChanged(before, now, flow = new Map()) {
   return now.some((c) => !c.partitionKey && !NOISE.test(c.name) && before.get(cookieKey(c)) !== c.value && flow.get(c.name) !== c.value)
 }
 
+/**
+ * Whether the site holds a cookie of its own that this window's visit did not just hand out (`flow`), so the browser
+ * may already be signed in. A session that is sent again on every answer was there `before`, so it still counts.
+ */
+export function holdsSession(before, now, flow = new Map()) {
+  return now.some((c) => !c.partitionKey && !NOISE.test(c.name) && (before.has(cookieKey(c)) || flow.get(c.name) !== c.value))
+}
+
 /** Whether a cookie with these attributes is one a request to `host` carries. */
 export function reaches(c, host) {
   const domain = c.domain.replace(/^\./, "")
