@@ -89,6 +89,19 @@ export function ruleFor(tab, site, view) {
   }
 }
 
+/**
+ * Keeps a board's frames off the site's real address while a login goes on in the window. A provider that knows the
+ * person would send a frame straight to the site's callback, which refuses it and may spend the state the window needs.
+ */
+export function frameShield(board, site) {
+  return {
+    id: board,
+    priority: 1,
+    action: { type: "block" },
+    condition: { regexFilter: `^${escapeRegex(site)}(/.*)?$`, resourceTypes: ["sub_frame"], tabIds: [board] },
+  }
+}
+
 /** How long after an automatic login a site gets no other, whatever came of it, so a login that fails cannot loop. */
 export const COOLDOWN = 10 * 60 * 1000
 
@@ -126,9 +139,9 @@ export function authorizeOf(text) {
 }
 
 // The last part of a path that is still the way in, not a page behind it.
-const WAY_IN = /(^|\/)(log-?in|sign-?in|auth|oauth|sso|saml2?|acs|callback|error|2fa|mfa|otp|verify|challenge)\/?$/i
+const WAY_IN = /(^|\/)(log-?in|sign-?in|auth|oauth|sso|saml2?|acs|callback|error|2fa|twofa|two-?factor|mfa|otp|verify|challenge)\/?$/i
 // A step of the site's own after the provider, where the person still has something to type.
-const STEP = /(^|\/)(2fa|mfa|otp|verify|challenge)\/?$/i
+const STEP = /(^|\/)(2fa|twofa|two-?factor|mfa|otp|verify|challenge)\/?$/i
 
 /**
  * What a page the login window came back to says: "in" past the login, "waiting" while the address still carries
@@ -141,6 +154,27 @@ export function landing(text) {
   // Access answers its own return with a redirect to the page, so this address is never where a login ends.
   if (q.has("code") || /(^#|&)(code|access_token|id_token)=/.test(url.hash) || url.pathname === "/cdn-cgi/access/authorized") return "waiting"
   return WAY_IN.test(url.pathname) ? "failed" : "in"
+}
+
+/** The view host's empty page, where a window has its cookies and waits to go on to the provider. */
+export const WINDOW_WAIT = "/__uifb/warm"
+
+/**
+ * Which of the provider addresses the devices were sent to a window should go on with. Devices clicking together each
+ * start a login, and only the one whose state the site's cookie still holds can come back, else the newest.
+ */
+export function resumeOf(urls, cookies = []) {
+  const held = (state) => cookies.some((c) => {
+    try {
+      return decodeURIComponent(c.value).includes(state)
+    } catch {
+      return c.value.includes(state)
+    }
+  })
+  return urls.findLast((u) => {
+    const state = new URL(u).searchParams.get("state")
+    return state && held(state)
+  }) ?? urls.at(-1) ?? null
 }
 
 /** Whether the address says the provider or the site refused the login, not just that it is not over yet. */

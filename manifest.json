@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "UI Feedback helper",
-  "version": "0.5.2",
+  "version": "0.6.0",
   "description": "Logs a UI Feedback board's devices in by itself: a site's login through Google, GitHub, SSO or another provider runs in a window of its own, and apps on this machine connect to the board.",
   "minimum_chrome_version": "132",
   "icons": {

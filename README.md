@@ -6,7 +6,7 @@ A small Chrome extension for [UI Feedback](https://ui.lesiuu.com/docs), the boar
 
 On the board every reviewed site runs on a host of its own, such as `shop-example-com-b4981fa5.view.ui.lesiuu.com`, and keeps its cookies there. A provider's login goes wrong there at the very end: the provider sends the browser back to the site's registered address, `https://shop.example.com/oauth/callback?code=...&state=...`, which is the real site, not the board, and no web page can follow a navigation to another origin to fix that. Cloudflare Access, SAML and OAuth with `response_mode=form_post` cannot be sent to another host at all.
 
-The helper runs the login where it belongs. It opens the site's **real address** in a window of its own, you log in as you always do, and once the site has set its session the helper copies the site's cookies to the site's host on the board, where the devices read them.
+The helper finishes the login the device started. A window opens at the provider's address the device was sent to, and the provider's way back to the real site goes to the site's host on the board instead, where the site's state cookie is. A provider that already knows you just comes back, so there is no second click. Where that way back cannot work (Cloudflare Access, SAML, `form_post`, a callback on another subdomain) the window runs on the site's **real address** and the helper copies the site's cookies to the site's host on the board.
 
 ## Install
 
@@ -22,13 +22,17 @@ The helper runs the login where it belongs. It opens the site's **real address**
 ### The login
 
 - A login starts when a device of a board (a frame right under the board's page, never a frame inside a reviewed page) is sent to one of these for the site the board has open: an https OAuth address with `client_id` and `redirect_uri` or `response_type` that returns to the site, a parent of its host or a sibling sharing all but the first label (`app.example.com` and `auth.example.com`), a Cloudflare Access login that names the site's host, or an address with `SAMLRequest` that the site's own page redirected to. **Log in to this site** in the **…** menu starts the same login by hand. The helper tells the board only that a login was met and on which page of the site: the address itself stays in the helper.
-- A window opens over the board at once, on the site's real address and nowhere else. A provider that needs a password, a consent or an account choice asks for it there, and the login signs you in to the real site in this browser, as it would in a normal tab.
-- The window closes by itself when all of this holds: it went through a provider over https, it is back on the site, the site has a new or changed cookie compared with before the window opened (trackers and what the site set on its way out, such as its OAuth state, do not count), and the address has stayed put for a moment. A 2FA, verification or other login step of the site keeps the window open. Back on the site with no new cookie, the window stays open for you, and closing it changes nothing.
+- A window opens over the board at once. For plain OAuth it goes on at the provider's address the device met (of several devices clicking together, the one whose state the site's cookie holds). A provider that needs a password, a consent or an account choice asks for it there. The session lands on the site's host on the board only, so your normal tabs of the site stay as they were. While it runs, the board's frames are kept off the site's real address by one block rule for that tab.
+- Access, SAML, `form_post`, a return to another subdomain and **Log in to this site** open the site's real address instead, and that login signs you in to the real site in this browser, as it would in a normal tab.
+- A plain OAuth window closes once it is back on the site. With a new cookie the board says you are logged in, without one it just loads the devices again.
+- A window on the real address closes by itself when all of this holds: it went through a provider over https, it is back on the site, the site has a new or changed cookie compared with before the window opened (trackers and what the site set on its way out, such as its OAuth state, do not count), and the address has stayed put for a moment. A 2FA, verification or other login step of the site keeps the window open. Back on the site with no new cookie, the window stays open for you, and closing it changes nothing.
 - While the window is open the board covers its devices with a waiting screen. **Show login window** brings a lost window back, **Cancel** closes it and copies nothing, and a finished login shows a short confirmation while the devices load.
 - A login that ended on an error closes the window and says so.
 - One window per board tab at a time, and after an attempt no other for that site in that tab for 10 minutes, whatever came of it, so a login that fails cannot loop. A device that meets the login again in that time gets a **Log in** button on the board instead of a refused page. That click and **Log in to this site** always work.
 
 ### What is copied, where and why
+
+This is the real-address window only. A plain OAuth login a device started copies nothing.
 
 - **What:** the cookies your browser would send to the open site's address, HttpOnly ones and those of a parent domain included. Cookies of other hosts, partitioned cookies and any name starting `__Host-uifb` are left out.
 - **Where:** to the site's host on the board, in the partition of the board's device frames, each as a host-only, `Secure`, `SameSite=None` cookie with its name, value, path, HttpOnly flag and expiry. Your normal tabs of the site keep their own cookies.
@@ -43,13 +47,13 @@ A frame on the board is cross-site for `localhost`, so Chrome drops the app's `S
 
 ## Permissions and why
 
-- `declarativeNetRequest`: the one redirect rule of a retry, applied by Chrome itself. Session rules only, scoped to one tab.
+- `declarativeNetRequest`: the redirect rule of a login window and the rule that keeps the board's frames off the site's real address during that login, applied by Chrome itself. Session rules only, each scoped to one tab.
 - `webNavigation`: to follow the login window, and to see which tab a board's page opened.
-- `webRequest`: to see a device's frame being sent to a provider's login, to see the login window pass through the provider, and to read the `Set-Cookie` of the login window and of the local app the board has open. It only watches: it blocks and changes nothing.
+- `webRequest`: to see a device's frame being sent to a provider's login, to see the login window pass through the provider, and to read the `Set-Cookie` of the login window and of the local app the board has open. It only watches.
 - `cookies`: to read the open site's cookies for the comparison and the copy above, and to write them into the partition of the board's frames. Only for the site the board has open, never for any other.
 - `alarms`: to drop the rule after 30 minutes, and to remember for 10 minutes that a site had its automatic login or a copy, even if the browser put the helper to sleep meanwhile. An alarm's name holds tab numbers and a short hash of the site, nothing else.
 - Content scripts on the boards' pages (the board's mark and its login window message) and on `localhost` pages (the overlay for apps framed by a board). They read nothing from the pages.
-- Host permission for every https site (and `localhost` for a board on this machine): Chrome redirects a request only for an extension that has permission for its address, and the site under review can be any site. This is why Chrome says the helper can "read and change all your data on all websites". The helper reads no page, changes no page but a board's and the localhost apps a board frames, opens no window but the login of the site the board has open, copies no cookies but that site's, and redirects nothing but a retry window's visits of that one site.
+- Host permission for every https site (and `localhost` for a board on this machine): Chrome redirects a request only for an extension that has permission for its address, and the site under review can be any site. This is why Chrome says the helper can "read and change all your data on all websites". The helper reads no page, changes no page but a board's and the localhost apps a board frames, opens no window but the login of the site the board has open, copies no cookies but that site's, and redirects nothing but a login window's visits of that one site.
 
 ## Privacy
 

@@ -1,10 +1,11 @@
-// Logs a board's devices in. A login runs in a window on the site's real address and its cookies are copied to the
-// site's view host (below). Only when a copied session does not hold, one retry runs on the view host: then a top-level
-// navigation of that window to the site's real origin goes to the view host instead, so the provider's code reaches
-// the board's proxy and the site's server finishes the login there, where its state cookie is. Only that window's tab
-// gets a rule, only for that one site, and only until the window closes, the board says it is done or LIFETIME passes.
+// Logs a board's devices in. A plain OAuth login a device started goes on in a window from the provider's address the
+// device met: a top-level navigation of that window to the site's real origin goes to the view host instead, so the
+// provider's code reaches the board's proxy and the site's server finishes the login there, where its state cookie is.
+// Only that window's tab gets that rule, only for that one site, and only until the window closes, the board says it
+// is done or LIFETIME passes. A login that cannot come back that way (Access, SAML, form_post, a sibling's callback)
+// or one asked for by hand runs on the site's real address, and its cookies are copied to the view host (below).
 // Nothing is logged, kept or sent anywhere: the addresses carry login codes.
-import { COOLDOWN, HOSTED, LIFETIME, boardOf, checkLogin, cookieKey, framedCookie, holdsSession, isBoardCookie, isBoardHost, isLocal, isStep, labelOf, landing, loginLike, loginOf, parseSetCookie, reaches, refused, ruleFor, sessionChanged, siteOf, viewsOf } from "./rules.js"
+import { COOLDOWN, HOSTED, LIFETIME, boardOf, checkLogin, WINDOW_WAIT, cookieKey, frameShield, framedCookie, holdsSession, isBoardCookie, isBoardHost, isLocal, isStep, labelOf, landing, loginLike, loginOf, parseSetCookie, reaches, refused, resumeOf, ruleFor, sessionChanged, siteOf, viewsOf } from "./rules.js"
 
 // The board opens its window in the click and names the site once it has the view ticket, a moment later, so a tab
 // it opened waits this long for that word, and a word this long for its tab.
@@ -103,6 +104,8 @@ chrome.tabs.onRemoved.addListener((tab) => {
   opened.delete(tab)
   asked.delete(tab)
   reloading.delete(tab)
+  met.delete(tab)
+  void unshield(tab)
   // A window whose board is gone has nobody to come back to.
   const a = tries.get(tab) ?? running.get(tab)
   if (a?.tab !== undefined) void finish(a, a.tab === tab ? "closed" : "failed")
@@ -118,11 +121,11 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 })
 
 /*
- * The login without a click. A device of a board meets a provider's login for the open site: the helper opens the
- * site's real address at once in a window of its own, over the board, where the provider may frame nothing and every
- * kind of return works, Access, SAML and form_post included. Once a login has really passed through the provider and
- * written a cookie, those cookies are copied to the site's view host in the frames' partition and the devices load
- * again. If the copy does not hold (a session bound to an address), one retry runs through the view host instead.
+ * The login without a second click. A device of a board meets a provider's login for the open site, and a window opens
+ * at once over the board. Plain OAuth goes on there from the very address the device met, with the frames' cookies, so
+ * a provider that knows the person just comes back. Access, SAML and form_post run on the site's real address, and
+ * once a login has passed through the provider and written a cookie, those cookies are copied to the view host in the
+ * frames' partition. If such a copy does not hold (a session bound to an address), one retry runs through the view host.
  */
 
 // What runs now, by the window's tab and by the board's tab. Lost if Chrome ends the worker, which the keepalive
@@ -136,6 +139,21 @@ const spotting = new Set()
 const reloading = new Set()
 // Boards whose login is over but still copying: their waiting screen stays until the result is known.
 const closing = new Set()
+// The provider addresses each board's devices were just sent to, kept here and never told to the board.
+const met = new Map()
+const MET_MAX = 12
+const MET_AGE = 20 * 1000
+const unshield = (board) => chrome.declarativeNetRequest.updateSessionRules({ removeRuleIds: [board] }).catch(() => {})
+async function shield(board, site) {
+  await chrome.declarativeNetRequest.updateSessionRules({ removeRuleIds: [board], addRules: [frameShield(board, site)] })
+  // A board that starts no window after all, as during a walk of the site in hidden frames, gets its frames back.
+  setTimeout(() => {
+    if (!running.has(board)) void unshield(board)
+  }, MET_AGE)
+}
+const remember = (board, url) => met.set(board, [...(met.get(board) ?? []), { url, at: Date.now() }].slice(-MET_MAX))
+/** What a window can go on with: plain OAuth that returns to the site's own address, seen moments ago. */
+const metFor = (board, open) => (met.get(board) ?? []).filter((m) => Date.now() - m.at < MET_AGE && loginOf(m.url, { ...open, from: null })?.viewable).map((m) => m.url)
 // Any extension call keeps the worker alive, and a person typing a password takes longer than its idle limit.
 const KEEPALIVE = 20 * 1000
 // How long a page that came back may still change the address before its verdict is read.
@@ -177,7 +195,9 @@ const isDevice = (d) => d.tabId >= 0 && d.frameId > 0 && d.parentFrameId === 0
 async function spotted(d, from) {
   if (!isDevice(d)) return
   const to = d.redirectUrl ?? d.url
-  if (!loginLike(to) || running.has(d.tabId) || spotting.has(d.tabId)) return
+  if (!loginLike(to)) return
+  remember(d.tabId, to)
+  if (running.has(d.tabId) || spotting.has(d.tabId)) return
   spotting.add(d.tabId)
   try {
     const open = await openSite(d.tabId)
@@ -196,7 +216,9 @@ async function spotted(d, from) {
     // No window by itself so soon after the last, or a failing login would loop. The board asks for a click instead,
     // as the device is left on a provider's page that refuses the frame.
     if (await chrome.alarms.get(await coolOf(d.tabId, open.site))) return void (await tell(d.tabId, { type: "login-needed", path }))
-    await tell(d.tabId, { type: "login-seen", path })
+    // Plain OAuth goes on in the window from where the device stopped, through the view host, whose cookies it shares.
+    if (found.viewable && !open.local) await shield(d.tabId, open.site)
+    await tell(d.tabId, { type: "login-seen", path, retry: found.viewable })
   } catch {
   } finally {
     spotting.delete(d.tabId)
@@ -254,8 +276,16 @@ async function starting(board, message) {
       await chrome.alarms.create(cool, { when: Date.now() + COOLDOWN })
     }
     const real = !open.local && !entry.view
-    Object.assign(a, { site: open.site, local: open.local, real, view: open.views[0], homes: real ? [open.site] : [open.site, ...open.views], from: new URL(entry.url).pathname })
+    Object.assign(a, { site: open.site, local: open.local, real, view: entry.view ?? open.views[0], homes: real ? [open.site] : [open.site, ...open.views], from: new URL(entry.url).pathname })
     if (real) a.before = new Map((await siteCookies(open.site)).map((c) => [cookieKey(c), c.value]))
+    let start = entry.url
+    if (entry.view && !a.manual && metFor(board, open).length) {
+      // The entry gives the window the frames' cookies, and from its empty page it goes straight on to the provider.
+      Object.assign(a, { open, resume: metFor(board, open) })
+      const url = new URL(entry.url)
+      url.searchParams.set("next", WINDOW_WAIT)
+      start = url.href
+    }
     const shape = { url: "about:blank", type: "popup", focused: true, ...SIZE }
     // Chrome refuses a place mostly off the screen, as under a board window dragged half out of it.
     const win = await chrome.windows.create({ ...shape, ...(await overBoard(board)) }).catch(() => chrome.windows.create(shape))
@@ -269,12 +299,28 @@ async function starting(board, message) {
     if (entry.view) await chrome.declarativeNetRequest.updateSessionRules({ removeRuleIds: [a.tab], addRules: [ruleFor(a.tab, open.site, entry.view)] })
     await chrome.alarms.create(alarmOf(a.tab, board), { when: Date.now() + LIFETIME })
     // Before the window goes anywhere, as a provider that answers at once could end the login before this arrives.
-    await tell(board, { type: "login-opened" }).catch(() => {})
-    await chrome.tabs.update(a.tab, { url: entry.url })
+    await tell(board, { type: "login-opened", canUse: real || open.local }).catch(() => {})
+    await chrome.tabs.update(a.tab, { url: start })
   } catch {
     if (a.tab === undefined) running.delete(board)
     else void finish(a, "failed")
   }
+}
+
+/** What the frames' jar holds of the site, as plain cookies to compare. The board's own never say anything of a login. */
+async function viewCookies(a) {
+  const key = await viewPartition(a).catch(() => null)
+  const all = key ? await chrome.cookies.getAll({ url: a.view, partitionKey: key }).catch(() => []) : []
+  return all.filter((c) => !isBoardCookie(c.name)).map(({ partitionKey, ...c }) => c)
+}
+
+/** Sends a window that has the frames' cookies on to the provider, with the login whose state those cookies hold. */
+async function goOn(a) {
+  const cookies = await viewCookies(a)
+  a.before = new Map(cookies.map((c) => [cookieKey(c), c.value]))
+  const seen = metFor(a.board, a.open)
+  const to = resumeOf(seen.length ? seen : a.resume, cookies)
+  if (to && !a.over) await chrome.tabs.update(a.tab, { url: to }).catch(() => {})
 }
 
 const atHome = (a, url) => {
@@ -353,12 +399,18 @@ function judge(a, url, since = Date.now()) {
   if (a.real) return judgeReal(a, url, since)
   // A 2FA step of the site's own is the person's to finish.
   if (isStep(url)) return
-  a.settle = setTimeout(() => {
+  a.settle = setTimeout(async () => {
     const said = landing(url)
     if (a.away) {
       if (said === "waiting" && Date.now() - since < WAIT_ANSWER) return judge(a, url, since)
       // By hand the person is there to see what went wrong.
       if (said !== "in" && a.manual) return
+      if (said === "in" && a.before) {
+        // No new cookie may still be a login kept in storage, which the frames share, but it is not one to announce.
+        const wrote = sessionChanged(a.before, await viewCookies(a))
+        if (!a.over && a.last === url) void finish(a, wrote ? "done" : "back")
+        return
+      }
       void finish(a, said === "in" ? "done" : "failed")
     } else if (!a.manual && a.local && said === "in" && new URL(url).pathname !== a.from) {
       // The app sent the window on by itself: a session of this browser it already had, only out of the frames' reach.
@@ -372,6 +424,10 @@ const committed = (d) => {
   if (!a || d.frameId !== 0) return
   clearTimeout(a.settle)
   a.last = d.url
+  if (a.resume && !a.resumed && d.url === `${a.view}${WINDOW_WAIT}`) {
+    a.resumed = true
+    return void goOn(a)
+  }
   // A real-site window counts only an https provider, so an error page or a plain http stop is no provider visit.
   if (!atHome(a, d.url) && d.url !== "about:blank" && (!a.real || d.url.startsWith("https://"))) a.away = true
 }
@@ -459,6 +515,7 @@ async function finish(a, outcome) {
   clearInterval(a.keep)
   a.unwatch?.()
   running.delete(a.board)
+  met.delete(a.board)
   closing.add(a.board)
   tries.delete(a.tab)
   if (!tries.size) follow(false)
@@ -477,6 +534,7 @@ async function finish(a, outcome) {
       await chrome.alarms.create(await againOf(a.board, a.site), { when })
     }
   }
+  await unshield(a.board)
   await end(a.tab).catch(() => {})
   if (outcome !== "closed") await chrome.windows.remove(a.window).catch(() => {})
   closing.delete(a.board)
