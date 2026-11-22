@@ -31,7 +31,7 @@ document.addEventListener("uifb:login-cancel", () => relay({ type: "login-cancel
 document.addEventListener("uifb:login-ask", () => relay({ type: "login-ask" }))
 document.addEventListener("uifb:login-start", (e) => {
   const detail = detailOf(e)
-  if (typeof detail?.site === "string" && typeof detail?.url === "string") relay({ type: "login-start", site: detail.site, url: detail.url, manual: detail.manual === true })
+  if (typeof detail?.site === "string" && typeof detail?.url === "string") relay({ type: "login-start", site: detail.site, url: detail.url, manual: detail.manual === true, again: detail.again === true })
 })
 
 // The background asks which site the board has open, as it may have slept since the board last said.

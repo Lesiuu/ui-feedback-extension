@@ -142,14 +142,16 @@ const closing = new Set()
 // The provider addresses each board's devices were just sent to, kept here and never told to the board.
 const met = new Map()
 const MET_MAX = 12
-const MET_AGE = 20 * 1000
+// As long as a person may take to answer the board's Log in button. The site's state outlives it.
+const MET_AGE = 5 * 60 * 1000
+const SHIELD_AGE = 20 * 1000
 const unshield = (board) => chrome.declarativeNetRequest.updateSessionRules({ removeRuleIds: [board] }).catch(() => {})
 async function shield(board, site) {
   await chrome.declarativeNetRequest.updateSessionRules({ removeRuleIds: [board], addRules: [frameShield(board, site)] })
   // A board that starts no window after all, as during a walk of the site in hidden frames, gets its frames back.
   setTimeout(() => {
     if (!running.has(board)) void unshield(board)
-  }, MET_AGE)
+  }, SHIELD_AGE)
 }
 const remember = (board, url) => met.set(board, [...(met.get(board) ?? []), { url, at: Date.now() }].slice(-MET_MAX))
 /** What a window can go on with: plain OAuth that returns to the site's own address, seen moments ago. */
@@ -215,7 +217,11 @@ async function spotted(d, from) {
     }
     // No window by itself so soon after the last, or a failing login would loop. The board asks for a click instead,
     // as the device is left on a provider's page that refuses the frame.
-    if (await chrome.alarms.get(await coolOf(d.tabId, open.site))) return void (await tell(d.tabId, { type: "login-needed", path }))
+    if (await chrome.alarms.get(await coolOf(d.tabId, open.site))) {
+      const viewable = found.viewable && !open.local
+      if (viewable) await shield(d.tabId, open.site)
+      return void (await tell(d.tabId, { type: "login-needed", path, viewable }))
+    }
     // Plain OAuth goes on in the window from where the device stopped, through the view host, whose cookies it shares.
     if (found.viewable && !open.local) await shield(d.tabId, open.site)
     await tell(d.tabId, { type: "login-seen", path, retry: found.viewable })
@@ -269,7 +275,8 @@ async function starting(board, message) {
       const cool = await coolOf(board, open.site)
       const cooled = await chrome.alarms.get(cool)
       const retry = Boolean(entry.view) && (await chrome.alarms.clear(await againOf(board, open.site)))
-      if (cooled && !retry) {
+      // The person's click on the board's Log in button is what the wait between attempts holds out for.
+      if (cooled && !retry && message.again !== true) {
         running.delete(board)
         return void (await tell(board, { type: "login-needed", path: a.from ?? null }).catch(() => {}))
       }
